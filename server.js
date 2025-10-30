@@ -77,15 +77,53 @@ app.post('/api/order', async (req, res) => {
             });
         }
 
-        // Send email notification
-        // For Gmail: May be blocked by Render. Use Brevo (smtp-relay.brevo.com) instead
-        // Set environment variables: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, EMAIL_TO
-        if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+        // Send email notification via webhook (more reliable than SMTP on free hosting)
+        // Option 1: Use Formspree (free, no signup needed)
+        if (process.env.FORMSPREE_ENDPOINT) {
+            try {
+                const response = await fetch(process.env.FORMSPREE_ENDPOINT, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        subject: `🐟 New Fish Parque Order - ${orderNumber}`,
+                        message: `
+Order Number: ${orderNumber}
+Date: ${orderDate}
+
+CUSTOMER INFORMATION:
+Name: ${name}
+Phone: ${phone}
+Address: ${address}
+
+ORDER DETAILS:
+Product: ${productNames[product]}
+Quantity: ${qty}kg
+Notes: ${notes || 'None'}
+
+✅ Order saved to server database.
+                        `
+                    })
+                });
+                
+                if (response.ok) {
+                    console.log(`✅ Email notification sent for order ${orderNumber}`);
+                } else {
+                    console.log(`⚠️ Email notification failed for order ${orderNumber}`);
+                }
+            } catch (error) {
+                console.error(`⚠️ Email notification error for order ${orderNumber}:`, error.message);
+            }
+        }
+        
+        // Option 2: Traditional SMTP (may timeout on free hosting)
+        else if (process.env.SMTP_USER && process.env.SMTP_PASS) {
             try {
                 const nodemailer = require('nodemailer');
                 
                 const transporter = nodemailer.createTransport({
-                    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+                    host: process.env.SMTP_HOST || 'smtp-relay.brevo.com',
                     port: parseInt(process.env.SMTP_PORT || '587'),
                     secure: false,
                     auth: {
@@ -128,11 +166,10 @@ app.post('/api/order', async (req, res) => {
                     `
                 };
 
-                // Try to send email with timeout
                 await Promise.race([
                     transporter.sendMail(mailOptions),
                     new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('Email timeout after 15s')), 15000)
+                        setTimeout(() => reject(new Error('Email timeout after 10s')), 10000)
                     )
                 ]);
                 
@@ -140,10 +177,9 @@ app.post('/api/order', async (req, res) => {
             } catch (emailError) {
                 console.error(`⚠️ Email failed for order ${orderNumber}:`, emailError.message);
                 console.log('Order is still saved in orders.txt');
-                // Don't fail the order if email fails - order is already saved
             }
         } else {
-            console.log(`⚠️ Email not configured. Order ${orderNumber} saved to orders.txt only.`);
+            console.log(`ℹ️ Email not configured. Order ${orderNumber} saved to orders.txt only.`);
         }
 
         // Success response
